@@ -25,7 +25,7 @@ test('native Node seed is idempotent, HTTP adapter serves real FTS5, missing con
       server!.stdout!.on('data', data => {const match = String(data).match(/http:\/\/127\.0\.0\.1:\d+/); if(match){clearTimeout(timeout); resolve(match[0]);}});
     });
     expect((await fetch(url+'/health')).status).toBe(200);
-    const response = await fetch(url+'/v1/search?q=moon%20cheese&mode=phrase');
+    const response = await fetch(url+'/v1/search?q=%22moon%20cheese%22');
     expect(response.status).toBe(200);
     expect((await response.json()).results.map((r: any) => r.passage_id)).toEqual(['demo-1-p1']);
     expect((await fetch(url+'/v1/context?passage_id=demo-1-p1&window=0')).status).toBe(200);

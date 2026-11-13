@@ -1,4 +1,5 @@
 import type { Client, Row } from '@libsql/client';
+import { normalizeQuery } from './query.ts';
 
 export async function handleRequest(request: Request, db: Client, options: {apiSecret?: string} = {}): Promise<Response> {
   try {
@@ -20,9 +21,9 @@ export async function handleRequest(request: Request, db: Client, options: {apiS
 }
 
 const columns = `p.passage_id, p.episode_id, p.start_ms, p.end_ms, p.text,
- e.title AS episode_title, e.published_at, e.source_url, e.demo`;
+ e.title AS episode_title, e.published_at, e.source_url`;
 function metadata(row: Row) {
-  return { ...row, demo: Boolean(row.demo), source_url: `${row.source_url}#t=${Math.floor(Number(row.start_ms) / 1000)}` };
+  return { ...row, source_url: `${row.source_url}#t=${Math.floor(Number(row.start_ms) / 1000)}` };
 }
 async function route(request: Request, db: Client): Promise<Response> {
   const url = new URL(request.url);
@@ -46,22 +47,35 @@ async function route(request: Request, db: Client): Promise<Response> {
     const rows = (await db.execute({sql:`SELECT ${columns} FROM passages p JOIN episodes e ON e.episode_id = p.episode_id
       WHERE p.episode_id = ? AND p.ordinal BETWEEN ? AND ? ORDER BY p.ordinal LIMIT 7`,
       args:[String(target.episode_id), Number(target.ordinal)-Number(window), Number(target.ordinal)+Number(window)]})).rows;
-    return Response.json({demo:rows.every(row => Boolean(row.demo)), passage_id:id, passages:rows.map(metadata)});
+    return Response.json({passage_id:id, passages:rows.map(metadata)});
   }
   const q = (url.searchParams.get('q') ?? '').trim();
   const params = url.searchParams;
   const limit = params.get('limit') ?? '10';
   const episode = params.get('episode_id');
-  if ([...params.keys()].some(key => !['q','mode','limit','episode_id'].includes(key) || params.getAll(key).length !== 1)
+  if ([...params.keys()].some(key => !['q','limit','episode_id'].includes(key) || params.getAll(key).length !== 1)
     || !q || q.includes('\0') || q.length > 200 || !/[\p{L}\p{N}]/u.test(q) || q.split(/\s+/u).length > 16
-    || !['all','phrase'].includes(params.get('mode') ?? 'all')
     || !/^\d{1,2}$/.test(limit) || Number(limit) < 1 || Number(limit) > 20
     || (episode !== null && !/^[A-Za-z0-9_-]{1,80}$/.test(episode))) {
     return Response.json({error:'Invalid parameters'}, {status:400});
   }
-  const rows = (await db.execute({sql: `SELECT ${columns} FROM passage_fts
-    JOIN passages p ON p.id = passage_fts.rowid JOIN episodes e ON e.episode_id = p.episode_id
-    WHERE passage_fts MATCH ? AND (? IS NULL OR p.episode_id = ?) ORDER BY bm25(passage_fts), p.passage_id LIMIT ?`,
-    args: [url.searchParams.get('mode') === 'phrase' ? '"' + q.replaceAll('"', '""') + '"' : q.split(/\s+/u).map(word => '"' + word.replaceAll('"', '""') + '"').join(' AND '), url.searchParams.get('episode_id'), url.searchParams.get('episode_id'), Number(url.searchParams.get('limit') ?? '10')]})).rows;
-  return Response.json({demo: rows.length > 0 && rows.every(row => Boolean(row.demo)), results: rows.map(metadata)});
+  const query = normalizeQuery(q);
+  // Compound terms are already quoted; leftover dots/hyphens are not supported FTS syntax.
+  if (!/[\p{L}\p{N}]/u.test(query) || /[.-]/.test(query.replace(/"[^"]*"/g, ''))) {
+    return Response.json({error:'Invalid parameters'}, {status:400});
+  }
+  let rows: Row[];
+  try {
+    rows = (await db.execute({sql: `SELECT ${columns} FROM passage_fts
+      JOIN passages p ON p.id = passage_fts.rowid JOIN episodes e ON e.episode_id = p.episode_id
+      WHERE passage_fts MATCH ? AND (? IS NULL OR p.episode_id = ?) ORDER BY bm25(passage_fts), p.passage_id LIMIT ?`,
+      args: [query, episode, episode, Number(limit)]})).rows;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'SQLITE_ERROR'
+      && /^SQLITE_ERROR: fts5: (?:syntax error near|unterminated string)/u.test(error.message)) {
+      return Response.json({error:'Invalid parameters'}, {status:400});
+    }
+    throw error;
+  }
+  return Response.json({results: rows.map(metadata)});
 }

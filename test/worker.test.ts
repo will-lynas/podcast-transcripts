@@ -20,7 +20,7 @@ async function setup() {
     expect(key).toBe('192.0.2.1'); return {success: ++calls <= 30};
   }}};
   const request = (trusted = true) => {
-    const req = new Request('https://api.example.com/v1/search?q=moon&mode=phrase', {headers:{'CF-Connecting-IP':'192.0.2.1'}});
+    const req = new Request('https://api.example.com/v1/search?q=%22moon%22', {headers:{'CF-Connecting-IP':'192.0.2.1'}});
     return trusted ? Object.assign(req, {cf:{colo:'TST'}}) : req;
   };
   return {worker, env, request};

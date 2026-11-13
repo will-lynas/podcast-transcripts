@@ -13,7 +13,7 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm check
 LOCAL_DATABASE_URL=file:demo.db pnpm seed
 LOCAL_DATABASE_URL=file:demo.db pnpm dev
-curl 'http://127.0.0.1:8787/v1/search?q=moon%20cheese&mode=phrase'
+curl --get 'http://127.0.0.1:8787/v1/search' --data-urlencode 'q=rocket "moon cheese"'
 curl 'http://127.0.0.1:8787/v1/context?passage_id=demo-1-p1&window=1'
 ```
 
@@ -22,14 +22,18 @@ The Node adapter binds loopback only, uses native TypeScript support, puts its c
 ## API
 
 - `GET /health`: verifies database/FTS table access.
-- `GET /v1/search?q=...&mode=all|phrase&limit=10&episode_id=...`: FTS5 BM25 order, then passage ID. Defaults: all words, ten results; optional episode filter.
+- `GET /v1/search?q=...&limit=10&episode_id=...`: FTS5 BM25 order, then passage ID. Defaults: ten results; optional episode filter. The former `mode` parameter is rejected.
 - `GET /v1/context?passage_id=...&window=1`: ordered passages within the same episode, at most three neighbors on either side (seven passages).
 
-Query: 1–200 characters after trimming, at most 16 whitespace-delimited terms, at least one letter/number. Requests: at most 2048 URL characters. Limit: 1–20. IDs: 1–80 ASCII letters, digits, underscores or hyphens. Passage text: at most 2000 characters, enforced by schema. Duplicate/unknown search or context parameters are rejected. FTS operators, prefixes and quotes are treated literally, not as executable FTS syntax: `all` quotes each whitespace-delimited term; `phrase` quotes the entire query. Tokenization is SQLite `unicode61`, not semantic search.
+Query: 1–200 characters after trimming, at most 16 whitespace-delimited terms, at least one letter/number, no NUL; these bounds apply before normalization. Requests: at most 2048 URL characters. Limit: 1–20. IDs: 1–80 ASCII letters, digits, underscores or hyphens. Passage text: at most 2000 characters, enforced by schema. Duplicate/unknown search or context parameters are rejected.
 
-Results include passage/episode IDs, episode title, UTC publication timestamp, passage start/end milliseconds, text, demo flag and timestamped source URL. Fictional fixture timestamps/links are invented. Empty search is `200` with `results: []`; invalid inputs `400`; missing passage/route `404`; wrong method `405`; optional bearer failure `401`; upstream/configuration failure `503` with generic error only. No SQL/write endpoint or query logging.
+`q` supports FTS5 words (implicit AND), mixed double-quoted phrases, uppercase `AND`/`OR`/`NOT` and trailing prefixes: `moon cheese`, `rocket "moon cheese"`, `moon OR carrots`, `moon NOT bicycle`, `rob*`. `NOT` is binary, not a unary exclusion. Quoted operators such as `"OR"` are literal words; a prefix star belongs outside quotes. Interior lowercase operators are ordinary words. Use URL encoding (as above) for quotes and punctuation.
 
-## Worker configuration (not deployed)
+Normalization preserves balanced quoted phrases, replaces unmatched quotes and unquoted punctuation (`+{}():"^@/#&|~[]<>,;!?$=`, backslash, apostrophe and `%`) with spaces, collapses repeated stars and removes leading stars. One dangling AND/OR/NOT at each edge is removed case-insensitively; quote these words to search them literally at an edge. Dotted/hyphenated/underscored terms become phrases (`moon-cheese` matches `"moon cheese"`). Parentheses are cleaned, not grouping syntax. Empty/tokenless normalized queries and remaining malformed syntax return `400`. Tokenization is SQLite `unicode61`: no semantic/substring search, automatic AND-to-OR retry or other zero-result broadening. Normalization is standalone, with no Hermes runtime dependency.
+
+Search returns `{results: [...]}`; context returns `{passage_id, passages: [...]}`. Each passage includes passage/episode IDs, episode title, UTC publication timestamp, start/end milliseconds, text and timestamped source URL; no `demo` field is exposed. Fictional fixture timestamps/links are invented. No matches is `200` with `results: []`; invalid inputs `400`; missing passage/route `404`; wrong method `405`; optional bearer failure `401`; upstream/configuration failure `503` with generic error only. No SQL/write endpoint or query logging.
+
+## Worker configuration
 
 `src/worker.ts` uses `@libsql/client/web`, never local-file fallback. Supply `TURSO_DATABASE_URL` (`libsql://...` or HTTPS) and a **read-only** `TURSO_AUTH_TOKEN` through Worker environment/secrets. The query service issues only SELECTs; database authorization must enforce read-only access. Optional `API_BEARER_SECRET`, if configured, requires `Authorization: Bearer ...` on every route including health; an empty configured secret fails closed. Keep secrets out of files/Git and shell history. `.dev.vars.example` contains placeholders only and is not loaded automatically. The Node adapter accepts only explicit `LOCAL_DATABASE_URL=file:...` and refuses simultaneous remote configuration.
 
