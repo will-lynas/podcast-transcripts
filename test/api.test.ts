@@ -126,6 +126,40 @@ test('real HTTP database transport failures stay generic 503', async () => {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+test.each([
+  ['SELECT rowid FROM passage_fts WHERE passage_fts MATCH \'moon OR OR carrots\'', 400],
+  ['SELECT * FROM missing_table', 503],
+  ['SELECT missing_column FROM episodes', 503],
+] as const)('classifies remote SQLITE_UNKNOWN errors from real SQLite failures: %s', async (sql, status) => {
+  const { db } = await setup();
+  const failure = await db.execute(sql).then(() => null, error => error as Error);
+  expect(failure).toBeInstanceOf(Error);
+  // Turso wraps these actual SQLite errors differently from the native client.
+  const message = failure!.message.replace(/^SQLITE_ERROR: /u, 'SQLite error: ');
+  const server = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const pipeline = JSON.parse(body) as {requests:{type:string}[]};
+    response.writeHead(200, {'Content-Type':'application/json'});
+    response.end(JSON.stringify({results:pipeline.requests.map(step => step.type === 'close'
+      ? {type:'ok', response:{type:'close'}} : {type:'error', error:{code:'SQLITE_UNKNOWN', message}})}));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected TCP server');
+    const { createClient: createWebClient } = await import('@libsql/client/web');
+    const remote = createWebClient({url:`http://127.0.0.1:${address.port}`}); clients.push(remote);
+    const received = await remote.execute(sql).then(() => null, error => error);
+    expect(received).toMatchObject({code:'SQLITE_UNKNOWN', message:'SQLITE_UNKNOWN: '+message});
+    const { handleRequest } = await import('../src/api.ts');
+    const response = await handleRequest(new Request('http://localhost/v1/search?q=moon%20OR%20OR%20carrots'), remote);
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({error:status === 400 ? 'Invalid parameters' : 'Service unavailable'});
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
 test('quoted operators are literal tokens; interior lowercase operators remain words', async () => {
   const { request, db } = await setup();
   await db.execute({sql:'INSERT INTO passages VALUES (?, ?, ?, ?, ?, ?, ?)', args:[7, 'test-operators', 'demo-2', 2, 20000, 30000, 'FICTIONAL TEST: A poet sang AND OR NOT under a blue sun.']});

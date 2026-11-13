@@ -71,8 +71,9 @@ async function route(request: Request, db: Client): Promise<Response> {
       WHERE passage_fts MATCH ? AND (? IS NULL OR p.episode_id = ?) ORDER BY bm25(passage_fts), p.passage_id LIMIT ?`,
       args: [query, episode, episode, Number(limit)]})).rows;
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'SQLITE_ERROR'
-      && /^SQLITE_ERROR: fts5: (?:syntax error near|unterminated string)/u.test(error.message)) {
+    if (error instanceof Error && 'code' in error
+      && ((error.code === 'SQLITE_ERROR' && /^SQLITE_ERROR: fts5: (?:syntax error near|unterminated string)/u.test(error.message))
+        || (error.code === 'SQLITE_UNKNOWN' && /^SQLITE_UNKNOWN: SQLite error: fts5: (?:syntax error near|unterminated string)/u.test(error.message)))) {
       return Response.json({error:'Invalid parameters'}, {status:400});
     }
     throw error;
