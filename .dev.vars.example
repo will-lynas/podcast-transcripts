@@ -1,0 +1,6 @@
+# Placeholder reference only. Do not commit a populated .dev.vars file.
+TURSO_DATABASE_URL=libsql://your-database.turso.io
+TURSO_AUTH_TOKEN=replace-with-read-only-token
+# Omit to disable optional bearer auth; never set an empty value.
+API_BEARER_SECRET=replace-with-independent-api-secret
+# Write credentials belong only to the separate seed process, never the Worker.

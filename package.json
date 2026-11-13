@@ -1,0 +1,7 @@
+{
+  "name": "podcast-transcripts", "version": "0.1.0", "private": true, "type": "module", "license": "MIT",
+  "packageManager": "pnpm@10.28.2", "engines": {"node": ">=26.5.0"},
+  "scripts": {"test": "vitest run", "typecheck": "tsc --noEmit", "bundle": "wrangler deploy --dry-run --outdir dist", "check": "pnpm test && pnpm typecheck && pnpm bundle", "seed": "node scripts/seed.ts", "dev": "node src/local.ts"},
+  "dependencies": {"@libsql/client": "0.18.0"},
+  "devDependencies": {"@cloudflare/workers-types": "5.20261106.1", "@types/node": "26.6.6", "typescript": "7.0.2", "vitest": "5.1.0", "wrangler": "4.158.0"}
+}
